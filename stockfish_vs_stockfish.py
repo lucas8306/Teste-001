@@ -1,19 +1,24 @@
-import pexpect, time, chess
+import pexpect, time, chess, random
 
 ENGINE_PATHS = {"Engine A": "engines/stockfish", "Engine B": "engines/stockfish"}
 
-def start_engine(path: str, name: str="Engine") -> pexpect.spawn:
-    try:
-        e = pexpect.spawn(path, encoding="utf-8", timeout=None)
-        e.sendline("uci"); e.expect("uciok", timeout=120)
-        e.sendline("isready"); e.expect("readyok", timeout=120)
-        print(f"{name} iniciado e pronto."); return e
-    except Exception as ex:
-        print(f"ERRO ao iniciar '{name}' ({path}): {ex}"); raise
+def start_engine(path: str, name: str="Engine", chess960: bool=False, threads: int=None, hash_size:int=None):
+    e = pexpect.spawn(path, encoding="utf-8", timeout=None)
+    e.sendline("uci"); e.expect("uciok", timeout=120)
+    if chess960:
+        try: e.sendline("setoption name UCI_Chess960 value true")
+        except: pass
+    if threads is not None:
+        try: e.sendline(f"setoption name Threads value {int(threads)}")
+        except: pass
+    if hash_size is not None:
+        try: e.sendline(f"setoption name Hash value {int(hash_size)}")
+        except: pass
+    e.sendline("isready"); e.expect("readyok", timeout=120)
+    print(f"{name} iniciado e pronto."); return e
 
-def get_engine_move_data(e: pexpect.spawn, fen: str, wtime:int, btime:int, winc:int, binc:int, name="Engine"):
-    e.sendline(f"position fen {fen}")
-    e.sendline(f"go wtime {wtime} btime {btime} winc {winc} binc {binc}")
+def get_engine_move_data(e, fen: str, wtime:int, btime:int, winc:int, binc:int, name="Engine"):
+    e.sendline(f"position fen {fen}"); e.sendline(f"go wtime {wtime} btime {btime} winc {winc} binc {binc}")
     best = None; depth = None; nodes = 0; score_cp = score_mate = None
     t0 = time.monotonic()
     while True:
@@ -38,14 +43,35 @@ def get_engine_move_data(e: pexpect.spawn, fen: str, wtime:int, btime:int, winc:
     nps = nodes / (elapsed_ms/1000) if nodes and elapsed_ms>0 else 0
     return best, depth, nodes, nps, score_cp, score_mate, elapsed_ms
 
+def _generate_chess960_board():
+    try:
+        idx = random.randrange(960)
+        try:
+            return chess.Board.from_chess960_pos(idx)
+        except AttributeError:
+            try:
+                pos = chess.chess960_starting_position(idx)
+                return chess.Board(pos)
+            except Exception:
+                return chess.Board(chess.STARTING_FEN)
+    except Exception:
+        return chess.Board(chess.STARTING_FEN)
+
 def run_chess_match(n1,p1,n2,p2,config):
     print(f"===== INICIANDO PARTIDA ENTRE {n1.upper()} E {n2.upper()} =====")
     e1 = e2 = None
-    board = chess.Board(config.get("initial_fen", chess.STARTING_FEN))
+    if config.get("chess960", False):
+        board = _generate_chess960_board()
+        print(f"Posição inicial Chess960 (FEN): {board.fen()}")
+    else:
+        board = chess.Board(config.get("initial_fen", chess.STARTING_FEN))
     moves_played = 0; game_pgn = ""; result="*"
     t1 = t2 = config.get("timelimit_ms",600000)
     try:
-        e1 = start_engine(p1, n1); e2 = start_engine(p2, n2)
+        e1 = start_engine(p1, n1, chess960=config.get("chess960", False),
+                          threads=config.get("threads"), hash_size=config.get("hash_size"))
+        e2 = start_engine(p2, n2, chess960=config.get("chess960", False),
+                          threads=config.get("threads"), hash_size=config.get("hash_size"))
         while not board.is_game_over() and moves_played < config.get("num_moves",50):
             white = board.turn==chess.WHITE
             name = n1 if white else n2
@@ -88,7 +114,7 @@ def run_chess_match(n1,p1,n2,p2,config):
                 except: pass
 
 if __name__=="__main__":
-    match_config = {'hash_size':2000,'threads':2,'timelimit_ms':15000,'increment_ms':0,'num_moves':1000,
+    match_config = {'chess960': True, 'hash_size':2000,'threads':2,'timelimit_ms':15000,'increment_ms':0,'num_moves':1000,
                     'initial_fen': chess.STARTING_FEN}
     run_chess_match("Stockfish", ENGINE_PATHS["Engine A"], "Stockfish", ENGINE_PATHS["Engine B"], match_config)
-        
+    
