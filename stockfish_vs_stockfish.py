@@ -1,4 +1,9 @@
-import pexpect, time, chess, random
+try:
+    import pexpect
+except ImportError:
+    import wexpect as pexpect
+
+import time, chess, random
 
 ENGINE_PATHS = {"Engine A": "engines/stockfish", "Engine B": "engines/stockfish"}
 
